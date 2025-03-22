@@ -133,6 +133,9 @@ mod tests {
             .unwrap();
         let res = svc.ready().await.unwrap().call(req).await.unwrap();
 
+        let vary_header = res.headers().get("vary").unwrap().to_str().unwrap();
+        assert!(vary_header.contains("accept-encoding"));
+
         // read the compressed body
         let collected = res.into_body().collect().await.unwrap();
         let trailers = collected.trailers().cloned().unwrap();
