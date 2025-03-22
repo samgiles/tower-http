@@ -123,7 +123,10 @@ impl CompressionLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::set_header::SetResponseHeaderLayer;
     use crate::test_helpers::Body;
+    use http::header::VARY;
+    use http::HeaderValue;
     use http::{header::ACCEPT_ENCODING, Request, Response};
     use http_body_util::BodyExt;
     use std::convert::Infallible;
@@ -140,6 +143,47 @@ mod tests {
         let body = Body::from_stream(stream);
         // Create response.
         Ok(Response::new(body))
+    }
+
+    #[tokio::test]
+    async fn vary_header_is_added() -> Result<(), crate::BoxError> {
+        let compression_layer = CompressionLayer::new().quality(CompressionLevel::Best);
+
+        let mut service = ServiceBuilder::new()
+            // Compress responses based on the `Accept-Encoding` header.
+            .layer(compression_layer.clone())
+            .service_fn(handle);
+
+        let request = Request::builder()
+            .header(ACCEPT_ENCODING, "gzip")
+            .body(Body::empty())?;
+
+        let response = service.ready().await?.call(request).await?;
+
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+        assert_eq!(response.headers()["vary"], "accept-encoding");
+
+        // test vary header behaviour when another layer adds a Vary header.
+        let mut composed_service = ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::appending(
+                VARY,
+                HeaderValue::from_static("accept-language"),
+            ))
+            .layer(compression_layer)
+            .service_fn(handle);
+
+        let request = Request::builder()
+            .header(ACCEPT_ENCODING, "gzip")
+            .body(Body::empty())?;
+
+        let response = composed_service.ready().await?.call(request).await?;
+
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+        let vary_header = response.headers()["vary"].to_str().unwrap();
+        assert!(vary_header.contains("accept-language"));
+        assert!(vary_header.contains("accept-encoding"));
+
+        Ok(())
     }
 
     #[tokio::test]
